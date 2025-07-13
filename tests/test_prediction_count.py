@@ -1,36 +1,62 @@
 import os
 import sqlite3
-import pytest
+import unittest
 from fastapi.testclient import TestClient
 from app import app, DB_PATH, init_db
 
 client = TestClient(app)
 
-@pytest.fixture(autouse=True)
-def setup_and_teardown():
-    # Before each test: clear DB and setup tables
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
-    init_db()
-    yield
-    # After each test: cleanup
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+class TestPredictionsCount(unittest.TestCase):
 
-def test_predictions_count_empty():
-    # Initially there should be 0 predictions
-    response = client.get("/predictions/count")
-    assert response.status_code == 200
-    assert response.json() == {"count": 0}
+    def setUp(self):
+        # Remove old DB file and recreate it
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+        init_db()
 
-def test_predictions_count_with_data():
-    # Insert a fake prediction into the last 7 days
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-            INSERT INTO prediction_sessions (uid, original_image, predicted_image)
-            VALUES ('1234', 'img1.jpg', 'img1_pred.jpg')
-        """)
+    def tearDown(self):
+        # Clean up after each test
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
 
-    response = client.get("/predictions/count")
-    assert response.status_code == 200
-    assert response.json() == {"count": 1}
+    def test_count_when_empty(self):
+        """
+        Ensure count is 0 when no predictions exist
+        """
+        response = client.get("/predictions/count")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["count"], 0)
+
+    def test_count_with_recent_prediction(self):
+        """
+        Insert a recent prediction and verify count is 1
+        """
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
+                VALUES ('test-uid', datetime('now', '-1 day'), 'original.jpg', 'predicted.jpg')
+            """)
+
+        response = client.get("/predictions/count")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["count"], 1)
+
+
+    def test_count_with_old_prediction(self):
+        """
+        Insert an old prediction (more than 7 days ago) and verify count is 0
+        """
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
+                VALUES ('old-uid', datetime('now', '-10 days'), 'old.jpg', 'old_pred.jpg')
+            """)
+
+        response = client.get("/predictions/count")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["count"], 0)
+
+
