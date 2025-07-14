@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response
 from ultralytics import YOLO
 from PIL import Image
@@ -260,6 +260,41 @@ def get_unique_labels_last_week():
         labels = [row[0] for row in cursor.fetchall()]
     return {"labels": labels}
 
+
+@app.delete("/prediction/{uid}")
+def delete_prediction(uid: str):
+    """
+        Delete a specific prediction and clean up associated files.
+        Remove prediction from database
+        Delete original and predicted image files
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        # Fetch image paths before deleting
+        row = cursor.execute("""
+            SELECT original_image, predicted_image FROM prediction_sessions WHERE uid = ?
+        """, (uid,)).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Prediction not found")
+
+        original_image_path, predicted_image_path = row
+
+        # Delete detection objects
+        cursor.execute("DELETE FROM detection_objects WHERE prediction_uid = ?", (uid,))
+
+        # Delete prediction session
+        cursor.execute("DELETE FROM prediction_sessions WHERE uid = ?", (uid,))
+
+    # Remove files if they exist
+    for path in [original_image_path, predicted_image_path]:
+        if path and os.path.exists(path):
+            os.remove(path)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        
 
 if __name__ == "__main__":
     import uvicorn
