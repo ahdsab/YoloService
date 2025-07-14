@@ -9,6 +9,9 @@ import shutil
 
 import time
 
+from collections import Counter
+
+
 # Disable GPU usage
 import torch
 torch.cuda.is_available = lambda: False
@@ -293,6 +296,50 @@ def delete_prediction(uid: str):
             os.remove(path)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+
+@app.get("/stats")
+def get_prediction_stats():
+    """
+    Return analytics for predictions made in the last 7 days:
+    - total number of predictions
+    - average confidence score
+    - most common labels
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        # Total number of predictions in the last 7 days
+        cursor.execute("""
+            SELECT COUNT(*) FROM prediction_sessions
+            WHERE timestamp >= datetime('now', '-7 days');
+        """)
+        total_predictions = cursor.fetchone()[0]
+
+        # All confidence scores for detections in the last 7 days
+        cursor.execute("""
+            SELECT do.score FROM detection_objects do
+            JOIN prediction_sessions ps ON do.prediction_uid = ps.uid
+            WHERE ps.timestamp >= datetime('now', '-7 days');
+        """)
+        scores = [row[0] for row in cursor.fetchall()]
+        avg_score = round(sum(scores) / len(scores), 3) if scores else 0.0
+
+        # Most frequent labels
+        cursor.execute("""
+            SELECT do.label FROM detection_objects do
+            JOIN prediction_sessions ps ON do.prediction_uid = ps.uid
+            WHERE ps.timestamp >= datetime('now', '-7 days');
+        """)
+        labels = [row[0] for row in cursor.fetchall()]
+        label_counts = Counter(labels).most_common(5)
+
+    return {
+        "total_predictions": total_predictions,
+        "average_confidence_score": avg_score,
+        "most_common_labels": {label:count for label, count in label_counts}
+    }
 
         
 
