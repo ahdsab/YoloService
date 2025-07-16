@@ -1,7 +1,6 @@
 import base64
 from fastapi.testclient import TestClient
-from main import app  # or wherever your app is
-
+import app
 client = TestClient(app)
 
 def auth_header(username, password):
