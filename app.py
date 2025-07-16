@@ -11,6 +11,41 @@ import time
 
 from collections import Counter
 
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Depends
+import secrets
+
+from typing import Optional
+from fastapi.security.utils import get_authorization_scheme_param
+from fastapi import Header
+
+security = HTTPBasic()
+
+
+def authenticate_user(credentials: HTTPBasicCredentials = Depends(security)):
+    username = credentials.username
+    password = credentials.password
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        row = cursor.execute(
+            "SELECT password FROM users WHERE username = ?", (username,)
+        ).fetchone()
+
+        if row is None or not secrets.compare_digest(row[0], password):
+            raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Basic"})
+
+    return username
+
+
+
+def security_optional(authorization: Optional[str] = Header(None)):
+    if authorization:
+        scheme, credentials = get_authorization_scheme_param(authorization)
+        if scheme.lower() == "basic":
+            return HTTPBasicCredentials(*base64.b64decode(credentials).decode().split(":", 1))
+    return None
+
 
 # Disable GPU usage
 import torch
@@ -52,6 +87,21 @@ def init_db():
                 FOREIGN KEY (prediction_uid) REFERENCES prediction_sessions (uid)
             )
         """)
+
+        # Create the users table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password TEXT NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            INSERT OR IGNORE INTO users (username, password)
+            VALUES ('admin', 'admin')
+        """)
+
+
         
         # Create index for faster queries
         conn.execute("CREATE INDEX IF NOT EXISTS idx_prediction_uid ON detection_objects (prediction_uid)")
@@ -81,10 +131,15 @@ def save_detection_object(prediction_uid, label, score, box):
         """, (prediction_uid, label, score, str(box)))
 
 @app.post("/predict")
-def predict(file: UploadFile = File(...)):
+def predict(
+    file: UploadFile = File(...),
+    credentials: HTTPBasicCredentials = Depends(security_optional)
+    ):
     """
     Predict objects in an image
     """
+
+    username = credentials.username if credentials else None
 
     start_time = time.time()
     ext = os.path.splitext(file.filename)[1]
@@ -122,7 +177,7 @@ def predict(file: UploadFile = File(...)):
     }
 
 @app.get("/prediction/{uid}")
-def get_prediction_by_uid(uid: str):
+def get_prediction_by_uid(uid: str, username: str = Depends(authenticate_user)):
     """
     Get prediction session by uid with all detected objects
     """

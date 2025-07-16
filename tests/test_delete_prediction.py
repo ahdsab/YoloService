@@ -1,10 +1,15 @@
 import unittest
 import os
 import sqlite3
+import base64
 from fastapi.testclient import TestClient
 from app import app, init_db, DB_PATH, UPLOAD_DIR, PREDICTED_DIR
 from uuid import uuid4
 from datetime import datetime
+
+def auth_header(username="admin", password="admin"):
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
 
 class TestDeletePredictionEndpoint(unittest.TestCase):
 
@@ -14,6 +19,18 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
             os.remove(DB_PATH)
         init_db()
         self.client = TestClient(app)
+
+        # Insert a test user for authentication
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                INSERT OR REPLACE INTO users (username, password) VALUES (?, ?)
+            """, ("admin", "admin"))
 
         # Create fake prediction
         self.uid = str(uuid4())
@@ -48,11 +65,11 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
 
     def test_delete_prediction_success(self):
         # Confirm prediction exists
-        response = self.client.get(f"/prediction/{self.uid}")
+        response = self.client.get(f"/prediction/{self.uid}", headers=auth_header())
         self.assertEqual(response.status_code, 200)
 
         # Perform delete
-        response = self.client.delete(f"/prediction/{self.uid}")
+        response = self.client.delete(f"/prediction/{self.uid}", headers=auth_header())
         self.assertEqual(response.status_code, 204)
 
         # Confirm DB entry removed
@@ -68,6 +85,6 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
 
     def test_delete_prediction_not_found(self):
         fake_uid = str(uuid4())
-        response = self.client.delete(f"/prediction/{fake_uid}")
+        response = self.client.delete(f"/prediction/{fake_uid}", headers=auth_header())
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "Prediction not found")
