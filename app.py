@@ -226,7 +226,7 @@ def health():
     """
     Health check endpoint
     """
-    return {"status": "ok"}
+    return {"status": "ok_123"}
 
 @app.get("/predictions/count")
 def predictions_count():
