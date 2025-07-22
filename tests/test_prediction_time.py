@@ -2,6 +2,7 @@ import unittest
 from fastapi.testclient import TestClient
 from PIL import Image
 import io
+import os
 import sqlite3
 from app import app, init_db, DB_PATH
 

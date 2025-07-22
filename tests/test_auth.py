@@ -1,10 +1,8 @@
 import unittest
 import os
 import base64
-import sqlite3
 from fastapi.testclient import TestClient
-from app import app, DB_PATH  # adjust import if needed
-from dependencies.auth import initialize_users_table
+from app import app, DB_PATH, init_db  # use init_db here
 
 client = TestClient(app)
 
@@ -16,10 +14,9 @@ class AuthTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Remove old DB and initialize fresh one
         if os.path.exists(DB_PATH):
             os.remove(DB_PATH)
-        initialize_users_table()
+        init_db()  # ensures prediction_sessions table exists
 
     def test_01_health_no_auth(self):
         response = client.get("/health")
@@ -48,12 +45,10 @@ class AuthTests(unittest.TestCase):
         self.assertIn("Password is required", response.text)
 
     def test_05_wrong_password(self):
-        # Create a user first
         correct_creds = encode_basic_auth("user2", "rightpass")
         with open("beatles.jpeg", "rb") as img:
             _ = client.post("/predict", headers=correct_creds, files={"file": ("image.jpg", img, "image/jpeg")})
 
-        # Try with wrong password
         wrong_creds = encode_basic_auth("user2", "wrongpass")
         with open("beatles.jpeg", "rb") as img:
             response = client.post("/predict", headers=wrong_creds, files={"file": ("image.jpg", img, "image/jpeg")})
