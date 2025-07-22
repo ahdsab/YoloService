@@ -3,7 +3,7 @@ import os
 import base64
 import sqlite3
 from fastapi.testclient import TestClient
-from main import app, DB_PATH  # adjust import if needed
+from app import app, DB_PATH  # adjust import if needed
 from dependencies.auth import initialize_users_table
 
 client = TestClient(app)
