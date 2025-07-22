@@ -15,14 +15,21 @@ class TestStatsEndpoint(unittest.TestCase):
         self.client = TestClient(app)
         self.now = datetime.utcnow()
 
-        # Insert sample prediction session in last 7 days
+        # Insert dummy user
         with sqlite3.connect(DB_PATH) as conn:
-            # One recent session
-            conn.execute("""
-                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
-                VALUES (?, ?, ?, ?)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO users (username, password)
+                VALUES (?, ?)
+            """, ("testuser", "testpass"))
+            self.user_id = cursor.lastrowid
+
+            # One recent session (linked to test user)
+            cursor.execute("""
+                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
+                VALUES (?, ?, ?, ?, ?)
             """, (
-                "recent-uid", self.now.isoformat(), "original.jpg", "predicted.jpg"
+                "recent-uid", self.now.isoformat(), "original.jpg", "predicted.jpg", self.user_id
             ))
 
             # Add detection objects
@@ -33,29 +40,33 @@ class TestStatsEndpoint(unittest.TestCase):
                 ("recent-uid", "dog", 0.95, "[0,0,100,100]"),
                 ("recent-uid", "car", 0.75, "[0,0,100,100]")
             ]
-            conn.executemany("""
+            cursor.executemany("""
                 INSERT INTO detection_objects (prediction_uid, label, score, box)
                 VALUES (?, ?, ?, ?)
             """, objects)
 
             # One old session outside 7-day range
-            conn.execute("""
-                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
-                VALUES (?, ?, ?, ?)
+            cursor.execute("""
+                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
+                VALUES (?, ?, ?, ?, ?)
             """, (
-                "old-uid", (self.now - timedelta(days=10)).isoformat(), "old.jpg", "old_pred.jpg"
+                "old-uid", (self.now - timedelta(days=10)).isoformat(), "old.jpg", "old_pred.jpg", self.user_id
             ))
-            conn.execute("""
+            cursor.execute("""
                 INSERT INTO detection_objects (prediction_uid, label, score, box)
                 VALUES (?, ?, ?, ?)
             """, ("old-uid", "outdated", 0.99, "[0,0,100,100]"))
+            conn.commit()
+
+        # Auth header for testuser:testpass
+        self.auth_headers = {"Authorization": "Basic dGVzdHVzZXI6dGVzdHBhc3M="}
 
     def tearDown(self):
         if os.path.exists(DB_PATH):
             os.remove(DB_PATH)
 
     def test_stats_endpoint(self):
-        response = self.client.get("/stats")
+        response = self.client.get("/stats", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         data = response.json()
 

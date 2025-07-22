@@ -16,17 +16,29 @@ class TestPredictionCount(unittest.TestCase):
         self.client = TestClient(app)
         self.now = datetime.utcnow()
 
+        # Insert dummy user
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO users (username, password)
+                VALUES (?, ?)
+            """, ("testuser", "testpass"))
+            self.user_id = cursor.lastrowid
+
+        # Auth header for testuser:testpass
+        self.auth_headers = {"Authorization": "Basic dGVzdHVzZXI6dGVzdHBhc3M="}
+
     def insert_prediction(self, uid, days_ago):
         timestamp = (self.now - timedelta(days=days_ago)).isoformat()
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
-                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
-                VALUES (?, ?, ?, ?)
-            """, (uid, timestamp, f"{uid}_original.jpg", f"{uid}_predicted.jpg"))
+                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (uid, timestamp, f"{uid}_original.jpg", f"{uid}_predicted.jpg", self.user_id))
 
     def test_prediction_count_format(self):
         """Check response format and status with empty DB"""
-        response = self.client.get("/predictions/count")
+        response = self.client.get("/predictions/count", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn("count", data)
@@ -37,7 +49,7 @@ class TestPredictionCount(unittest.TestCase):
         """Ensure only recent predictions are counted"""
         self.insert_prediction("recent-1", 2)
         self.insert_prediction("old-1", 10)
-        response = self.client.get("/predictions/count")
+        response = self.client.get("/predictions/count", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 1)
 
@@ -46,7 +58,7 @@ class TestPredictionCount(unittest.TestCase):
         self.insert_prediction("recent-1", 1)
         self.insert_prediction("recent-2", 3)
         self.insert_prediction("recent-3", 6)
-        response = self.client.get("/predictions/count")
+        response = self.client.get("/predictions/count", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 3)
 
@@ -54,13 +66,13 @@ class TestPredictionCount(unittest.TestCase):
         """Ensure old predictions are not counted"""
         self.insert_prediction("old-1", 8)
         self.insert_prediction("old-2", 15)
-        response = self.client.get("/predictions/count")
+        response = self.client.get("/predictions/count", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 0)
 
     def test_prediction_exactly_7_days_old(self):
         """Prediction exactly 7 days ago should be included"""
         self.insert_prediction("exact-7", 7)
-        response = self.client.get("/predictions/count")
+        response = self.client.get("/predictions/count", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 1)
