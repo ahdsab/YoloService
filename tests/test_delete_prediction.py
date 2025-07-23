@@ -74,9 +74,11 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Prediction not found")
 
     def test_delete_with_missing_files(self):
-        # Remove files manually
-        os.remove(self.original_path)
-        os.remove(self.predicted_path)
+        # Remove files manually (safe)
+        if os.path.exists(self.original_path):
+            os.remove(self.original_path)
+        if os.path.exists(self.predicted_path):
+            os.remove(self.predicted_path)
 
         response = self.client.delete(f"/prediction/{self.uid}")
         # Still should return 204 even if files missing
