@@ -52,15 +52,15 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
 
     def test_delete_prediction_success(self):
         # Confirm prediction exists
-        response = self.client.get(f"/prediction/{self.uid}")
+        response = self.client.get(f"/prediction/{self.uid}", headers=self.auth_headers)
         self.assertEqual(response.status_code, 200)
 
         # Perform delete
-        response = self.client.delete(f"/prediction/{self.uid}")
+        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
         self.assertEqual(response.status_code, 204)
 
         # Try deleting again (should return 404)
-        response = self.client.delete(f"/prediction/{self.uid}")
+        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
         self.assertEqual(response.status_code, 404)
 
         # Confirm files removed
@@ -74,12 +74,10 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Prediction not found")
 
     def test_delete_with_missing_files(self):
-        # Remove files manually (safe)
-        if os.path.exists(self.original_path):
-            os.remove(self.original_path)
-        if os.path.exists(self.predicted_path):
-            os.remove(self.predicted_path)
+        # Remove files manually
+        os.remove(self.original_path)
+        os.remove(self.predicted_path)
 
-        response = self.client.delete(f"/prediction/{self.uid}")
+        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
         # Still should return 204 even if files missing
         self.assertEqual(response.status_code, 204)
