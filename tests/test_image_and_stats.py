@@ -8,6 +8,7 @@ from app import app, init_db, DB_PATH, UPLOAD_DIR, PREDICTED_DIR
 
 client = TestClient(app)
 
+
 class TestImageAndStats(unittest.TestCase):
 
     def setUp(self):
