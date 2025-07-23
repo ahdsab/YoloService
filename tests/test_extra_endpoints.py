@@ -86,8 +86,8 @@ class TestExtraEndpoints(unittest.TestCase):
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
                 INSERT OR IGNORE INTO prediction_sessions
-                (uid, original_image, predicted_image, user_id)
-                VALUES (?, ?, ?, (SELECT id FROM users WHERE username = 'testuser'))
+                (uid, original_image, predicted_image)
+                VALUES (?, ?, ?)
             """, (uid, "missing.jpg", "missing_pred.jpg"))
         try:
             response = client.get(f"/prediction/{uid}/image", headers=auth_headers())
@@ -100,8 +100,8 @@ class TestExtraEndpoints(unittest.TestCase):
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
                 INSERT OR IGNORE INTO prediction_sessions
-                (uid, original_image, predicted_image, user_id)
-                VALUES (?, ?, ?, (SELECT id FROM users WHERE username = 'testuser'))
+                (uid, original_image, predicted_image)
+                VALUES (?, ?, ?)
             """, (uid, "missing.jpg", "missing_pred.jpg"))
         headers = auth_headers()
         headers["Accept"] = "application/json"
