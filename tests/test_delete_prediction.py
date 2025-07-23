@@ -26,15 +26,21 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         with open(self.predicted_path, "w") as f:
             f.write("fake predicted image")
 
+        # Insert into DB
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
                 INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
                 VALUES (?, ?, ?, ?)
             """, (self.uid, datetime.utcnow().isoformat(), self.original_path, self.predicted_path))
+
             conn.execute("""
                 INSERT INTO detection_objects (prediction_uid, label, score, box)
                 VALUES (?, ?, ?, ?)
             """, (self.uid, "car", 0.9, "[0,0,100,100]"))
+            conn.commit()
+
+        # Base64 for testuser:testpass
+        self.auth_headers = {"Authorization": "Basic dGVzdHVzZXI6dGVzdHBhc3M="}
 
     def tearDown(self):
         if os.path.exists(DB_PATH):
@@ -45,9 +51,11 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
             os.remove(self.predicted_path)
 
     def test_delete_prediction_success(self):
+        # Confirm prediction exists
         response = self.client.get(f"/prediction/{self.uid}")
         self.assertEqual(response.status_code, 200)
 
+        # Perform delete
         response = self.client.delete(f"/prediction/{self.uid}")
         self.assertEqual(response.status_code, 204)
 
@@ -61,7 +69,7 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
 
     def test_delete_prediction_not_found(self):
         fake_uid = str(uuid4())
-        response = self.client.delete(f"/prediction/{fake_uid}")
+        response = self.client.delete(f"/prediction/{fake_uid}", headers=self.auth_headers)
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "Prediction not found")
 
