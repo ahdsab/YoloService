@@ -14,6 +14,16 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         init_db()
         self.client = TestClient(app)
 
+        # create a user so resolve_user_id will match it
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)",
+                ("testuser", "testpass")
+            )
+            self.user_id = conn.execute(
+                "SELECT id FROM users WHERE username = ?", ("testuser",)
+            ).fetchone()[0]
+
         self.uid = str(uuid4())
         self.original_path = os.path.join(UPLOAD_DIR, self.uid + ".jpg")
         self.predicted_path = os.path.join(PREDICTED_DIR, self.uid + ".jpg")
@@ -26,12 +36,12 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         with open(self.predicted_path, "w") as f:
             f.write("fake predicted image")
 
-        # Insert into DB
+        # Insert into DB with the SAME user_id the endpoint expects
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
-                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image)
-                VALUES (?, ?, ?, ?)
-            """, (self.uid, datetime.utcnow().isoformat(), self.original_path, self.predicted_path))
+                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (self.uid, datetime.utcnow().isoformat(), self.original_path, self.predicted_path, self.user_id))
 
             conn.execute("""
                 INSERT INTO detection_objects (prediction_uid, label, score, box)
