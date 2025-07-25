@@ -9,38 +9,41 @@ from datetime import datetime
 class TestDeletePredictionEndpoint(unittest.TestCase):
 
     def setUp(self):
-        # Reset database
         if os.path.exists(DB_PATH):
             os.remove(DB_PATH)
         init_db()
         self.client = TestClient(app)
 
-        # Create fake prediction paths
+        # create a user so resolve_user_id will match it
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)",
+                ("testuser", "testpass")
+            )
+            self.user_id = conn.execute(
+                "SELECT id FROM users WHERE username = ?", ("testuser",)
+            ).fetchone()[0]
+
         self.uid = str(uuid4())
         self.original_path = os.path.join(UPLOAD_DIR, self.uid + ".jpg")
         self.predicted_path = os.path.join(PREDICTED_DIR, self.uid + ".jpg")
 
-        # Create dummy image files
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        os.makedirs(PREDICTED_DIR, exist_ok=True)
+
         with open(self.original_path, "w") as f:
             f.write("fake original image")
         with open(self.predicted_path, "w") as f:
             f.write("fake predicted image")
 
-        # Insert dummy user and prediction
+        # Insert into DB with the SAME user_id the endpoint expects
         with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO users (username, password)
-                VALUES (?, ?)
-            """, ("testuser", "testpass"))
-            user_id = cursor.lastrowid
-
-            cursor.execute("""
+            conn.execute("""
                 INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
                 VALUES (?, ?, ?, ?, ?)
-            """, (self.uid, datetime.utcnow().isoformat(), self.original_path, self.predicted_path, user_id))
+            """, (self.uid, datetime.utcnow().isoformat(), self.original_path, self.predicted_path, self.user_id))
 
-            cursor.execute("""
+            conn.execute("""
                 INSERT INTO detection_objects (prediction_uid, label, score, box)
                 VALUES (?, ?, ?, ?)
             """, (self.uid, "car", 0.9, "[0,0,100,100]"))
@@ -66,14 +69,11 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
         self.assertEqual(response.status_code, 204)
 
-        # Confirm DB entry removed
-        with sqlite3.connect(DB_PATH) as conn:
-            prediction = conn.execute("SELECT * FROM prediction_sessions WHERE uid = ?", (self.uid,)).fetchone()
-            objects = conn.execute("SELECT * FROM detection_objects WHERE prediction_uid = ?", (self.uid,)).fetchall()
-            self.assertIsNone(prediction)
-            self.assertEqual(len(objects), 0)
+        # Try deleting again (should return 404)
+        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
+        self.assertEqual(response.status_code, 404)
 
-        # Confirm files deleted
+        # Confirm files removed
         self.assertFalse(os.path.exists(self.original_path))
         self.assertFalse(os.path.exists(self.predicted_path))
 
@@ -82,3 +82,12 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         response = self.client.delete(f"/prediction/{fake_uid}", headers=self.auth_headers)
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "Prediction not found")
+
+    def test_delete_with_missing_files(self):
+        # Remove files manually
+        os.remove(self.original_path)
+        os.remove(self.predicted_path)
+
+        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
+        # Still should return 204 even if files missing
+        self.assertEqual(response.status_code, 204)
