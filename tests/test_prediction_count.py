@@ -1,44 +1,43 @@
 import unittest
 from fastapi.testclient import TestClient
-from app import app, init_db, DB_PATH
-import sqlite3
+from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
-import os
+
+from app import app
+from dependencies.auth import resolve_user_id
+from database.connections import get_db
+from models.PredictionSession_model import PredictionSession
 
 class TestPredictionCount(unittest.TestCase):
-
     def setUp(self):
-        # Clean the DB
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
-        init_db()
-
         self.client = TestClient(app)
+        self.fake_user_id = 1
         self.now = datetime.utcnow()
 
-        # Insert dummy user
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO users (username, password)
-                VALUES (?, ?)
-            """, ("testuser", "testpass"))
-            self.user_id = cursor.lastrowid
+        # Dependency overrides
+        self.mock_db = MagicMock()
+        app.dependency_overrides[get_db] = lambda: self.mock_db
+        app.dependency_overrides[resolve_user_id] = lambda: self.fake_user_id
 
-        # Auth header for testuser:testpass
-        self.auth_headers = {"Authorization": "Basic dGVzdHVzZXI6dGVzdHBhc3M="}
+    def tearDown(self):
+        app.dependency_overrides = {}
 
-    def insert_prediction(self, uid, days_ago):
-        timestamp = (self.now - timedelta(days=days_ago)).isoformat()
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("""
-                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (uid, timestamp, f"{uid}_original.jpg", f"{uid}_predicted.jpg", self.user_id))
+    def _setup_mock_query(self, timestamps):
+        """
+        Mocks db.query(PredictionSession).filter(...).count()
+        Based on whether timestamps are within the last 7 days
+        """
+        recent_cutoff = self.now - timedelta(days=7)
+        count = sum(1 for ts in timestamps if ts >= recent_cutoff)
+
+        query_mock = MagicMock()
+        self.mock_db.query.return_value.filter.return_value.count.return_value = count
 
     def test_prediction_count_format(self):
         """Check response format and status with empty DB"""
-        response = self.client.get("/predictions/count", headers=self.auth_headers)
+        self._setup_mock_query([])
+
+        response = self.client.get("/predictions/count")
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn("count", data)
@@ -47,32 +46,46 @@ class TestPredictionCount(unittest.TestCase):
 
     def test_prediction_count_last_7_days(self):
         """Ensure only recent predictions are counted"""
-        self.insert_prediction("recent-1", 2)
-        self.insert_prediction("old-1", 10)
-        response = self.client.get("/predictions/count", headers=self.auth_headers)
+        timestamps = [
+            self.now - timedelta(days=2),   # recent
+            self.now - timedelta(days=10),  # old
+        ]
+        self._setup_mock_query(timestamps)
+
+        response = self.client.get("/predictions/count")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 1)
 
     def test_prediction_count_multiple_recent(self):
         """Ensure multiple recent predictions are counted"""
-        self.insert_prediction("recent-1", 1)
-        self.insert_prediction("recent-2", 3)
-        self.insert_prediction("recent-3", 6)
-        response = self.client.get("/predictions/count", headers=self.auth_headers)
+        timestamps = [
+            self.now - timedelta(days=1),
+            self.now - timedelta(days=3),
+            self.now - timedelta(days=6),
+        ]
+        self._setup_mock_query(timestamps)
+
+        response = self.client.get("/predictions/count")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 3)
 
     def test_prediction_count_all_old(self):
         """Ensure old predictions are not counted"""
-        self.insert_prediction("old-1", 8)
-        self.insert_prediction("old-2", 15)
-        response = self.client.get("/predictions/count", headers=self.auth_headers)
+        timestamps = [
+            self.now - timedelta(days=8),
+            self.now - timedelta(days=15),
+        ]
+        self._setup_mock_query(timestamps)
+
+        response = self.client.get("/predictions/count")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 0)
 
     def test_prediction_exactly_7_days_old(self):
         """Prediction exactly 7 days ago should be included"""
-        self.insert_prediction("exact-7", 7)
-        response = self.client.get("/predictions/count", headers=self.auth_headers)
+        timestamps = [self.now - timedelta(days=7)]
+        self._setup_mock_query(timestamps)
+
+        response = self.client.get("/predictions/count")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 1)
