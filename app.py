@@ -4,8 +4,13 @@ from controler.stats import router as stats_router
 from controler.image import router as images_router
 from controler.labels import router as labels_router
 from controler.health import router as health_router
+from database.connections import Base, engine
 
 app = FastAPI()
+
+# Automatically create tables if they don't exist
+Base.metadata.create_all(bind=engine)
+
 app.include_router(prediction_router)
 app.include_router(stats_router)
 app.include_router(images_router)

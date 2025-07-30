@@ -70,7 +70,6 @@ def predict(file: UploadFile=File(...), user_id=Depends(resolve_user_id), db: Se
         "time_took": processing_time
     }
 
-
 @router.get("/prediction/{uid}")
 def get_prediction_by_uid(uid: str, user_id: int=Depends(resolve_user_id), db: Session=Depends(get_db)):
     """
@@ -156,5 +155,3 @@ def delete_prediction(uid: str, user_id: int = Depends(resolve_user_id), db: Ses
             os.remove(path)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
