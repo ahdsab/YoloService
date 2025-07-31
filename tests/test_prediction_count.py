@@ -14,7 +14,7 @@ class TestPredictionCount(unittest.TestCase):
         self.fake_user_id = 1
         self.now = datetime.utcnow()
 
-        # Dependency overrides
+        # Create MagicMock for DB session
         self.mock_db = MagicMock()
         app.dependency_overrides[get_db] = lambda: self.mock_db
         app.dependency_overrides[resolve_user_id] = lambda: self.fake_user_id
@@ -24,12 +24,13 @@ class TestPredictionCount(unittest.TestCase):
 
     def _setup_mock_query(self, timestamps):
         """
-        Mocks db.query(PredictionSession).filter(...).count()
-        Based on whether timestamps are within the last 7 days
+        Simulate db.query(...).filter(...).count() based on timestamps.
+        Only those within the last 7 days (inclusive) will be counted.
         """
         recent_cutoff = self.now - timedelta(days=7)
         count = sum(1 for ts in timestamps if ts >= recent_cutoff)
 
+        # Setup the chained query: db.query(...).filter(...).count()
         query_mock = MagicMock()
         self.mock_db.query.return_value.filter.return_value.count.return_value = count
 
@@ -45,10 +46,10 @@ class TestPredictionCount(unittest.TestCase):
         self.assertEqual(data["count"], 0)
 
     def test_prediction_count_last_7_days(self):
-        """Ensure only recent predictions are counted"""
+        """Only recent predictions should be counted"""
         timestamps = [
-            self.now - timedelta(days=2),   # recent
-            self.now - timedelta(days=10),  # old
+            self.now - timedelta(days=2),   # within 7 days
+            self.now - timedelta(days=10),  # older than 7 days
         ]
         self._setup_mock_query(timestamps)
 
@@ -57,7 +58,7 @@ class TestPredictionCount(unittest.TestCase):
         self.assertEqual(response.json()["count"], 1)
 
     def test_prediction_count_multiple_recent(self):
-        """Ensure multiple recent predictions are counted"""
+        """Multiple predictions within 7 days"""
         timestamps = [
             self.now - timedelta(days=1),
             self.now - timedelta(days=3),
@@ -70,7 +71,7 @@ class TestPredictionCount(unittest.TestCase):
         self.assertEqual(response.json()["count"], 3)
 
     def test_prediction_count_all_old(self):
-        """Ensure old predictions are not counted"""
+        """Predictions older than 7 days shouldn't be counted"""
         timestamps = [
             self.now - timedelta(days=8),
             self.now - timedelta(days=15),

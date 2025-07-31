@@ -1,4 +1,4 @@
-from fastapi import UploadFile, File, HTTPException, status
+from fastapi import UploadFile, File, HTTPException, status, Request
 from fastapi.responses import FileResponse, Response
 from ultralytics import YOLO
 from PIL import Image
@@ -112,7 +112,7 @@ def get_predictions_by_score(min_score: float, user_id: int = Depends(resolve_us
     return query_prediction_sessions_by_min_score(db, min_score=min_score, user_id=user_id)
 
 @router.get("/prediction/{uid}/image")
-def get_prediction_image(uid: str, db: Session=Depends(get_db)):
+def get_prediction_image(uid: str, request: Request,db: Session=Depends(get_db)):
     """
     Get prediction image by uid
     """

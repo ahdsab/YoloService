@@ -1,12 +1,14 @@
 from fastapi import FastAPI
-from controler.prediction import router as prediction_router
-from controler.stats import router as stats_router
-from controler.image import router as images_router
-from controler.labels import router as labels_router
-from controler.health import router as health_router
-from database.connections import Base, engine
+from controller.prediction import router as prediction_router
+from controller.stats import router as stats_router
+from controller.image import router as images_router
+from controller.labels import router as labels_router
+from controller.health import router as health_router
+from database.connections import Base, engine, init_db
 
 app = FastAPI()
+
+init_db()
 
 # Automatically create tables if they don't exist
 Base.metadata.create_all(bind=engine)

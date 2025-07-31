@@ -14,17 +14,17 @@ class TestProcessingTime(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
-        # Create a simple in-memory image
+        # Create in-memory test image
         self.test_image = Image.new("RGB", (100, 100), color="red")
         self.image_bytes = io.BytesIO()
         self.test_image.save(self.image_bytes, format="JPEG")
         self.image_bytes.seek(0)
 
-        # Fake user ID and mocked DB session
+        # Mocked user ID and DB session
         self.fake_user_id = 123
         self.mock_db = MagicMock()
 
-        # Override dependencies
+        # Override FastAPI dependencies
         app.dependency_overrides[resolve_user_id] = lambda: self.fake_user_id
         app.dependency_overrides[get_db] = lambda: self.mock_db
 
@@ -32,18 +32,22 @@ class TestProcessingTime(unittest.TestCase):
         app.dependency_overrides = {}
 
     def _setup_yolo_mock(self, mock_model):
-        # Create fake NumPy image (YOLO output)
+        # Simulate fake image output
         fake_np_image = np.zeros((640, 640, 3), dtype=np.uint8)
 
-        # Create mock YOLO results
-        mock_results = MagicMock()
-        mock_results[0].boxes = [MagicMock()]
-        mock_results[0].boxes[0].cls = [MagicMock(item=lambda: 0)]
-        mock_results[0].boxes[0].conf = [0.9]
-        mock_results[0].boxes[0].xyxy = [np.array([10, 20, 30, 40])]
-        mock_results[0].plot.return_value = fake_np_image
+        # Mock prediction results
+        mock_box = MagicMock()
+        mock_box.cls = [MagicMock(item=lambda: 0)]
+        mock_box.conf = [0.9]
+        mock_box.xyxy = [np.array([10, 20, 30, 40])]
 
-        # Simulate delay to make time_took > 0
+        mock_result = MagicMock()
+        mock_result.boxes = mock_box
+        mock_result.plot.return_value = fake_np_image
+
+        mock_results = [mock_result]
+
+        # Simulate time delay to produce a time_took > 0
         def fake_model_call(*args, **kwargs):
             time.sleep(0.01)
             return mock_results
@@ -51,9 +55,9 @@ class TestProcessingTime(unittest.TestCase):
         mock_model.side_effect = fake_model_call
         mock_model.names = {0: "test_label"}
 
-    @patch("controler.prediction.model")
+    @patch("controller.prediction.model")
     def test_predict_includes_processing_time_with_auth(self, mock_model):
-        """Authenticated user: /predict should return processing time > 0"""
+        """Authenticated user: /predict returns processing time > 0"""
         self._setup_yolo_mock(mock_model)
 
         response = self.client.post(
@@ -68,12 +72,10 @@ class TestProcessingTime(unittest.TestCase):
         self.assertIsInstance(data["time_took"], (int, float))
         self.assertGreater(data["time_took"], 0.0)
 
-    @patch("controler.prediction.model")
+    @patch("controller.prediction.model")
     def test_predict_includes_processing_time_without_auth(self, mock_model):
-        """Anonymous user: /predict should still return processing time > 0"""
-        # Override resolve_user_id to simulate anonymous behavior
+        """Anonymous user: /predict returns processing time > 0"""
         app.dependency_overrides[resolve_user_id] = lambda: 0
-
         self._setup_yolo_mock(mock_model)
 
         response = self.client.post(

@@ -7,7 +7,7 @@ DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")
 if DB_BACKEND == "postgres":
     DATABASE_URL = "postgresql://user:pass@localhost/db"
 else:
-    DATABASE_URL = "sqlite:///./preductions.db"
+    DATABASE_URL = "sqlite:///./predictions.db"
 
 engine = create_engine(
     DATABASE_URL,
@@ -23,3 +23,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def init_db():
+    if DB_BACKEND == "postgres":
+        print("Creating tables in Postgres...")
+        Base.metadata.create_all(bind=engine)
