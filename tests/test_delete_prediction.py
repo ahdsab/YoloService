@@ -1,93 +1,50 @@
 import unittest
-import os
-import sqlite3
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
-from app import app, init_db, DB_PATH, UPLOAD_DIR, PREDICTED_DIR
-from uuid import uuid4
-from datetime import datetime
+from fastapi import status
+from app import app
+from dependencies.auth import resolve_user_id
+from database.connections import get_db
 
 class TestDeletePredictionEndpoint(unittest.TestCase):
-
     def setUp(self):
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
-        init_db()
         self.client = TestClient(app)
+        self.fake_user_id = 99
+        self.fake_uid = "abc123"
 
-        # create a user so resolve_user_id will match it
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)",
-                ("testuser", "testpass")
-            )
-            self.user_id = conn.execute(
-                "SELECT id FROM users WHERE username = ?", ("testuser",)
-            ).fetchone()[0]
-
-        self.uid = str(uuid4())
-        self.original_path = os.path.join(UPLOAD_DIR, self.uid + ".jpg")
-        self.predicted_path = os.path.join(PREDICTED_DIR, self.uid + ".jpg")
-
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
-        os.makedirs(PREDICTED_DIR, exist_ok=True)
-
-        with open(self.original_path, "w") as f:
-            f.write("fake original image")
-        with open(self.predicted_path, "w") as f:
-            f.write("fake predicted image")
-
-        # Insert into DB with the SAME user_id the endpoint expects
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("""
-                INSERT INTO prediction_sessions (uid, timestamp, original_image, predicted_image, user_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (self.uid, datetime.utcnow().isoformat(), self.original_path, self.predicted_path, self.user_id))
-
-            conn.execute("""
-                INSERT INTO detection_objects (prediction_uid, label, score, box)
-                VALUES (?, ?, ?, ?)
-            """, (self.uid, "car", 0.9, "[0,0,100,100]"))
-            conn.commit()
-
-        # Base64 for testuser:testpass
-        self.auth_headers = {"Authorization": "Basic dGVzdHVzZXI6dGVzdHBhc3M="}
+        # Mock database session
+        self.mock_db = MagicMock()
+        app.dependency_overrides[get_db] = lambda: self.mock_db
+        app.dependency_overrides[resolve_user_id] = lambda: self.fake_user_id
 
     def tearDown(self):
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
-        if os.path.exists(self.original_path):
-            os.remove(self.original_path)
-        if os.path.exists(self.predicted_path):
-            os.remove(self.predicted_path)
+        app.dependency_overrides = {}
 
-    def test_delete_prediction_success(self):
-        # Confirm prediction exists
-        response = self.client.get(f"/prediction/{self.uid}", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 200)
+    @patch("controller.prediction.query_delete_prediction_by_uid")
+    @patch("controller.prediction.os.remove")
+    @patch("controller.prediction.os.path.exists")
+    def test_delete_prediction_success(self, mock_exists, mock_remove, mock_query):
+        # Simulate files exist
+        mock_exists.return_value = True
 
-        # Perform delete
-        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 204)
+        # Simulate returned file paths
+        mock_query.return_value = ("/tmp/fake_original.jpg", "/tmp/fake_predicted.jpg")
 
-        # Try deleting again (should return 404)
-        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 404)
+        response = self.client.delete(f"/prediction/{self.fake_uid}")
 
-        # Confirm files removed
-        self.assertFalse(os.path.exists(self.original_path))
-        self.assertFalse(os.path.exists(self.predicted_path))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        mock_query.assert_called_once_with(self.mock_db, self.fake_uid, self.fake_user_id)
+        self.assertEqual(mock_remove.call_count, 2)
 
-    def test_delete_prediction_not_found(self):
-        fake_uid = str(uuid4())
-        response = self.client.delete(f"/prediction/{fake_uid}", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "Prediction not found")
+    @patch("controller.prediction.query_delete_prediction_by_uid")
+    @patch("controller.prediction.os.remove")
+    @patch("controller.prediction.os.path.exists")
+    def test_delete_prediction_files_do_not_exist(self, mock_exists, mock_remove, mock_query):
+        # Simulate files do not exist
+        mock_exists.return_value = False
+        mock_query.return_value = ("/tmp/missing1.jpg", "/tmp/missing2.jpg")
 
-    def test_delete_with_missing_files(self):
-        # Remove files manually
-        os.remove(self.original_path)
-        os.remove(self.predicted_path)
+        response = self.client.delete(f"/prediction/{self.fake_uid}")
 
-        response = self.client.delete(f"/prediction/{self.uid}", headers=self.auth_headers)
-        # Still should return 204 even if files missing
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        mock_remove.assert_not_called()

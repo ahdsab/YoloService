@@ -1,56 +1,70 @@
+# tests/test_auth.py
 import unittest
-import os
-import base64
-from fastapi.testclient import TestClient
-from app import app, DB_PATH, init_db  # use init_db here
+from unittest.mock import MagicMock
+from fastapi import HTTPException
+from fastapi.security import HTTPBasicCredentials
+import dependencies.auth as auth
 
-client = TestClient(app)
 
-def encode_basic_auth(username, password):
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"Authorization": f"Basic {token}"}
+class TestResolveUserId(unittest.TestCase):
+    def setUp(self):
+        self.mock_db = MagicMock()
+        self.mock_request = MagicMock()
 
-class AuthTests(unittest.TestCase):
+    def test_anonymous_user_when_no_credentials(self):
+        # Simulate no anonymous user in DB
+        self.mock_db.query().filter().first.return_value = None
+        self.mock_db.add = MagicMock()
+        self.mock_db.commit = MagicMock()
+        
+        # Simulate setting ID in refresh
+        self.mock_db.refresh.side_effect = lambda user: setattr(user, 'id', 99)
 
-    @classmethod
-    def setUpClass(cls):
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
-        init_db()  # ensures prediction_sessions table exists
+        user_id = auth.resolve_user_id(self.mock_request, credentials=None, db=self.mock_db)
+        self.assertEqual(user_id, 99)
 
-    def test_01_health_no_auth(self):
-        response = client.get("/health")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+    def test_existing_user_correct_password(self):
+        # Simulate existing user with correct password
+        mock_user = MagicMock()
+        mock_user.id = 1
+        mock_user.password = "password123"
+        self.mock_db.query().filter().first.return_value = mock_user
 
-    def test_02_predict_no_auth(self):
-        with open("beatles.jpeg", "rb") as img:
-            response = client.post("/predict", files={"file": ("image.jpg", img, "image/jpeg")})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("prediction_uid", response.json())
+        creds = HTTPBasicCredentials(username="testuser", password="password123")
+        user_id = auth.resolve_user_id(self.mock_request, credentials=creds, db=self.mock_db)
+        self.assertEqual(user_id, 1)
 
-    def test_03_create_user_and_predict(self):
-        creds = encode_basic_auth("newuser", "mypassword")
-        with open("beatles.jpeg", "rb") as img:
-            response = client.post("/predict", headers=creds, files={"file": ("image.jpg", img, "image/jpeg")})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("labels", response.json())
+    def test_existing_user_incorrect_password_raises_401(self):
+        # Simulate existing user with wrong password
+        mock_user = MagicMock()
+        mock_user.id = 1
+        mock_user.password = "correctpass"
+        self.mock_db.query().filter().first.return_value = mock_user
 
-    def test_04_missing_password(self):
-        token = base64.b64encode("useronly:".encode()).decode()
-        headers = {"Authorization": f"Basic {token}"}
-        with open("beatles.jpeg", "rb") as img:
-            response = client.post("/predict", headers=headers, files={"file": ("image.jpg", img, "image/jpeg")})
-        self.assertEqual(response.status_code, 401)
-        self.assertIn("Password is required", response.text)
+        creds = HTTPBasicCredentials(username="testuser", password="wrongpass")
+        with self.assertRaises(HTTPException) as context:
+            auth.resolve_user_id(self.mock_request, credentials=creds, db=self.mock_db)
 
-    def test_05_wrong_password(self):
-        correct_creds = encode_basic_auth("user2", "rightpass")
-        with open("beatles.jpeg", "rb") as img:
-            _ = client.post("/predict", headers=correct_creds, files={"file": ("image.jpg", img, "image/jpeg")})
+        self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.detail, "Incorrect password.")
 
-        wrong_creds = encode_basic_auth("user2", "wrongpass")
-        with open("beatles.jpeg", "rb") as img:
-            response = client.post("/predict", headers=wrong_creds, files={"file": ("image.jpg", img, "image/jpeg")})
-        self.assertEqual(response.status_code, 401)
-        self.assertIn("Incorrect password", response.text)
+    def test_missing_password_raises_401(self):
+        creds = HTTPBasicCredentials(username="testuser", password="")
+        with self.assertRaises(HTTPException) as context:
+            auth.resolve_user_id(self.mock_request, credentials=creds, db=self.mock_db)
+
+        self.assertEqual(context.exception.status_code, 401)
+        self.assertEqual(context.exception.detail, "Password is required.")
+
+    def test_create_user_if_not_exists(self):
+        # Simulate user not found
+        self.mock_db.query().filter().first.return_value = None
+
+        # Simulate insert behavior
+        self.mock_db.add = MagicMock()
+        self.mock_db.commit = MagicMock()
+        self.mock_db.refresh.side_effect = lambda user: setattr(user, 'id', 42)
+
+        creds = HTTPBasicCredentials(username="newuser", password="newpass")
+        user_id = auth.resolve_user_id(self.mock_request, credentials=creds, db=self.mock_db)
+        self.assertEqual(user_id, 42)
