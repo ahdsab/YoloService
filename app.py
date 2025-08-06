@@ -10,9 +10,6 @@ app = FastAPI()
 
 init_db()
 
-# Automatically create tables if they don't exist
-Base.metadata.create_all(bind=engine)
-
 app.include_router(prediction_router)
 app.include_router(stats_router)
 app.include_router(images_router)

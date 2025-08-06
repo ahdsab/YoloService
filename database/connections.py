@@ -1,11 +1,17 @@
 import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+
+
+# Load environment variables from .env file
+load_dotenv()
 
 DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")
 
 if DB_BACKEND == "postgres":
-    DATABASE_URL = "postgresql://user:pass@localhost/db"
+    DATABASE_URL = "postgresql://user:pass@localhost:5432/predictions"
 else:
     DATABASE_URL = "sqlite:///./predictions.db"
 
