@@ -8,7 +8,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # Load environment variables from .env file
 load_dotenv()
 
-DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")
+# DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")
+DB_BACKEND = "sqlite"
 
 if DB_BACKEND == "postgres":
     DATABASE_URL = "postgresql://user:pass@localhost:5432/predictions"
@@ -30,7 +31,11 @@ def get_db():
     finally:
         db.close()
 
+# def init_db():
+#     if DB_BACKEND == "postgres":
+#         print("Creating tables in Postgres...")
+#         Base.metadata.create_all(bind=engine)
+
 def init_db():
-    if DB_BACKEND == "postgres":
-        print("Creating tables in Postgres...")
-        Base.metadata.create_all(bind=engine)
+    # Always create tables for whatever backend we're using
+    Base.metadata.create_all(bind=engine)

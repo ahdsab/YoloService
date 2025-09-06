@@ -41,3 +41,4 @@ Thumbs.db
 .ipynb_checkpoints/
 
 coverage.xml
+.env_docker

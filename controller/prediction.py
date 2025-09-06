@@ -6,17 +6,18 @@ import os
 import uuid
 import shutil
 import time
+from io import BytesIO
 
 # Disable GPU usage
 import torch
 torch.cuda.is_available = lambda: False
-
 
 from dependencies.auth import resolve_user_id
 from fastapi import Depends
 from fastapi import APIRouter
 from database.queries import *
 from database.connections import get_db
+from utils.s3_utils import upload_image_to_s3, download_image_from_s3, delete_file_from_s3
 UPLOAD_DIR = "uploads/original"
 PREDICTED_DIR = "uploads/predicted"
 DB_PATH = "predictions.db"
@@ -30,7 +31,10 @@ model = YOLO("yolov8n.pt")
 router = APIRouter()
 
 @router.post("/predict")
-def predict(file: UploadFile=File(...), user_id=Depends(resolve_user_id), db: Session=Depends(get_db)):
+def predict(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(resolve_user_id)):
     """
     Predict objects in an image
     """
@@ -38,19 +42,38 @@ def predict(file: UploadFile=File(...), user_id=Depends(resolve_user_id), db: Se
     start_time = time.time()
     ext = os.path.splitext(file.filename)[1]
     uid = str(uuid.uuid4())
-    original_path = os.path.join(UPLOAD_DIR, uid + ext)
-    predicted_path = os.path.join(PREDICTED_DIR, uid + ext)
+    original_filename = f"{uid}{ext}"
+    predicted_filename = f"{uid}{ext}"
 
-    with open(original_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # Read uploaded file content
+    file_content = file.file.read()
+    
+    # Upload original image to S3
+    original_s3_url = upload_image_to_s3(file_content, "original", original_filename)
+    
+    # Create temporary file for YOLO processing
+    temp_original_path = os.path.join(UPLOAD_DIR, original_filename)
+    temp_predicted_path = os.path.join(PREDICTED_DIR, predicted_filename)
+    
+    # Save to temp file for YOLO processing
+    with open(temp_original_path, "wb") as f:
+        f.write(file_content)
 
-    results = model(original_path, device="cpu")
+    # Run YOLO prediction
+    results = model(temp_original_path, device="cpu")
 
+    # Generate predicted image
     annotated_frame = results[0].plot()  # NumPy image with boxes
     annotated_image = Image.fromarray(annotated_frame)
-    annotated_image.save(predicted_path)
+    annotated_image.save(temp_predicted_path)
+    
+    # Read predicted image and upload to S3
+    with open(temp_predicted_path, "rb") as f:
+        predicted_content = f.read()
+    predicted_s3_url = upload_image_to_s3(predicted_content, "predicted", predicted_filename)
 
-    new_session = query_save_prediction_session(db, uid, original_path, predicted_path, user_id)
+    # Save to database with S3 URLs
+    new_session = query_save_prediction_session(db, uid, original_s3_url, predicted_s3_url, user_id)
     
     detected_labels = []
     for box in results[0].boxes:
@@ -61,13 +84,22 @@ def predict(file: UploadFile=File(...), user_id=Depends(resolve_user_id), db: Se
         new_detection = query_save_detection_object(db, uid, label, score, bbox)
         detected_labels.append(label)
 
+    # Clean up temporary files
+    try:
+        os.remove(temp_original_path)
+        os.remove(temp_predicted_path)
+    except OSError:
+        pass  # Files might not exist
+
     processing_time = round(time.time() - start_time, 2)
 
     return {
         "prediction_uid": uid, 
         "detection_count": len(results[0].boxes),
         "labels": detected_labels,
-        "time_took": processing_time
+        "time_took": processing_time,
+        "original_image_url": original_s3_url,
+        "predicted_image_url": predicted_s3_url
     }
 
 @router.get("/prediction/{uid}")
@@ -111,26 +143,6 @@ def get_predictions_by_score(min_score: float, user_id: int = Depends(resolve_us
     """
     return query_prediction_sessions_by_min_score(db, min_score=min_score, user_id=user_id)
 
-@router.get("/prediction/{uid}/image")
-def get_prediction_image(uid: str, request: Request,db: Session=Depends(get_db)):
-    """
-    Get prediction image by uid
-    """
-    accept = request.headers.get("accept", "")
-    image_path = query_predicted_image_by_uid(db, uid=uid)
-    if not image_path:
-        raise HTTPException(status_code=404, detail="Prediction not found")
-
-    if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="Predicted image file not found")
-
-    if "image/png" in accept:
-        return FileResponse(image_path, media_type="image/png")
-    elif "image/jpeg" in accept or "image/jpg" in accept:
-        return FileResponse(image_path, media_type="image/jpeg")
-    else:
-        # If the client doesn't accept image, respond with 406 Not Acceptable
-        raise HTTPException(status_code=406, detail="Client does not accept an image format")
 
 @router.get("/predictions/count")
 def predictions_count(db: Session=Depends(get_db)):
@@ -145,13 +157,14 @@ def delete_prediction(uid: str, user_id: int = Depends(resolve_user_id), db: Ses
     """
         Delete a specific prediction and clean up associated files.
         Remove prediction from database
-        Delete original and predicted image files
+        Delete original and predicted image files from S3
     """
-    original_path, predicted_path = query_delete_prediction_by_uid(db, uid, user_id)
+    original_url, predicted_url = query_delete_prediction_by_uid(db, uid, user_id)
 
-    # Remove files if they exist
-    for path in [original_path, predicted_path]:
-        if path and os.path.exists(path):
-            os.remove(path)
+    # Delete files from S3
+    if original_url:
+        delete_file_from_s3(original_url)
+    if predicted_url:
+        delete_file_from_s3(predicted_url)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
