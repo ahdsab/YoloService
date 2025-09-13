@@ -21,30 +21,26 @@ class TestDeletePredictionEndpoint(unittest.TestCase):
         app.dependency_overrides = {}
 
     @patch("controller.prediction.query_delete_prediction_by_uid")
-    @patch("controller.prediction.os.remove")
-    @patch("controller.prediction.os.path.exists")
-    def test_delete_prediction_success(self, mock_exists, mock_remove, mock_query):
-        # Simulate files exist
-        mock_exists.return_value = True
-
-        # Simulate returned file paths
-        mock_query.return_value = ("/tmp/fake_original.jpg", "/tmp/fake_predicted.jpg")
+    @patch("controller.prediction.delete_file_from_s3")
+    def test_delete_prediction_success(self, mock_delete_s3, mock_query):
+        # Simulate returned S3 URLs
+        mock_query.return_value = ("https://bucket.s3.region.amazonaws.com/original/fake.jpg", "https://bucket.s3.region.amazonaws.com/predicted/fake.jpg")
+        mock_delete_s3.return_value = True
 
         response = self.client.delete(f"/prediction/{self.fake_uid}")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         mock_query.assert_called_once_with(self.mock_db, self.fake_uid, self.fake_user_id)
-        self.assertEqual(mock_remove.call_count, 2)
+        self.assertEqual(mock_delete_s3.call_count, 2)
 
     @patch("controller.prediction.query_delete_prediction_by_uid")
-    @patch("controller.prediction.os.remove")
-    @patch("controller.prediction.os.path.exists")
-    def test_delete_prediction_files_do_not_exist(self, mock_exists, mock_remove, mock_query):
-        # Simulate files do not exist
-        mock_exists.return_value = False
-        mock_query.return_value = ("/tmp/missing1.jpg", "/tmp/missing2.jpg")
+    @patch("controller.prediction.delete_file_from_s3")
+    def test_delete_prediction_files_do_not_exist(self, mock_delete_s3, mock_query):
+        # Simulate returned S3 URLs
+        mock_query.return_value = ("https://bucket.s3.region.amazonaws.com/original/missing1.jpg", "https://bucket.s3.region.amazonaws.com/predicted/missing2.jpg")
+        mock_delete_s3.return_value = True
 
         response = self.client.delete(f"/prediction/{self.fake_uid}")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        mock_remove.assert_not_called()
+        self.assertEqual(mock_delete_s3.call_count, 2)

@@ -42,4 +42,4 @@ class TestGetImageEndpoint(unittest.TestCase):
 
         response = self.client.get(f"/image/original/{self.valid_filename}")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertEqual(response.json()["detail"], "Image not found")
+        self.assertEqual(response.json()["detail"], "Image not found. Please use the prediction endpoints to get S3 URLs.")
