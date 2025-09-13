@@ -32,22 +32,42 @@ router = APIRouter()
 
 @router.post("/predict")
 def predict(
-    file: UploadFile = File(...),
+    file: UploadFile = File(None),
     db: Session = Depends(get_db),
-    user_id: int = Depends(resolve_user_id)):
+    user_id: int = Depends(resolve_user_id),
+    img: str = None,
+    ):
     """
     Predict objects in an image
     """
-
+    print(img)
     start_time = time.time()
-    ext = os.path.splitext(file.filename)[1]
+
+    # Determine source of image bytes and extension
+    file_content = None
+    if img and not file:
+        # Try to locate the image on disk using common locations
+        candidate_paths = [
+            img,
+            os.path.join(os.getcwd(), img),
+            os.path.join(UPLOAD_DIR, img),
+        ]
+        image_path = next((p for p in candidate_paths if os.path.isfile(p)), None)
+        if not image_path:
+            raise HTTPException(status_code=400, detail=f"Image '{img}' not found on server")
+        ext = os.path.splitext(image_path)[1]
+        with open(image_path, "rb") as f:
+            file_content = f.read()
+    elif file:
+        ext = os.path.splitext(file.filename)[1]
+        # Read uploaded file content
+        file_content = file.file.read()
+    else:
+        raise HTTPException(status_code=400, detail="Provide either a file upload or 'img' query parameter")
     uid = str(uuid.uuid4())
     original_filename = f"{uid}{ext}"
     predicted_filename = f"{uid}{ext}"
 
-    # Read uploaded file content
-    file_content = file.file.read()
-    
     # Upload original image to S3
     original_s3_url = upload_image_to_s3(file_content, "original", original_filename)
     
