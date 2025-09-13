@@ -33,8 +33,10 @@ class TestPredictDetection(unittest.TestCase):
     @patch("controller.prediction.model")
     @patch("controller.prediction.query_save_prediction_session")
     @patch("controller.prediction.query_save_detection_object")
+    @patch("controller.prediction.upload_image_to_s3")
     def test_detection_box_data_is_processed(
         self,
+        mock_upload_s3,
         mock_save_detection,
         mock_save_session,
         mock_model,
@@ -64,6 +66,9 @@ class TestPredictDetection(unittest.TestCase):
 
         # Mock prediction session save
         mock_save_session.return_value = MagicMock()
+        
+        # Mock S3 uploads
+        mock_upload_s3.return_value = "https://bucket.s3.region.amazonaws.com/fake.jpg"
 
         response = self.client.post(
             "/predict",

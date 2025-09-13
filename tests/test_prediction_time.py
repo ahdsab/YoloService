@@ -56,9 +56,13 @@ class TestProcessingTime(unittest.TestCase):
         mock_model.names = {0: "test_label"}
 
     @patch("controller.prediction.model")
-    def test_predict_includes_processing_time_with_auth(self, mock_model):
+    @patch("controller.prediction.upload_image_to_s3")
+    def test_predict_includes_processing_time_with_auth(self, mock_upload_s3, mock_model):
         """Authenticated user: /predict returns processing time > 0"""
         self._setup_yolo_mock(mock_model)
+        
+        # Mock S3 uploads
+        mock_upload_s3.return_value = "https://bucket.s3.region.amazonaws.com/fake.jpg"
 
         response = self.client.post(
             "/predict",
@@ -73,10 +77,14 @@ class TestProcessingTime(unittest.TestCase):
         self.assertGreater(data["time_took"], 0.0)
 
     @patch("controller.prediction.model")
-    def test_predict_includes_processing_time_without_auth(self, mock_model):
+    @patch("controller.prediction.upload_image_to_s3")
+    def test_predict_includes_processing_time_without_auth(self, mock_upload_s3, mock_model):
         """Anonymous user: /predict returns processing time > 0"""
         app.dependency_overrides[resolve_user_id] = lambda: 0
         self._setup_yolo_mock(mock_model)
+        
+        # Mock S3 uploads
+        mock_upload_s3.return_value = "https://bucket.s3.region.amazonaws.com/fake.jpg"
 
         response = self.client.post(
             "/predict",
