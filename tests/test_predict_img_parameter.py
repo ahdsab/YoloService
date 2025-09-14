@@ -110,6 +110,49 @@ class TestPredictImgParameter(unittest.TestCase):
         # Verify S3 was attempted
         self.assertTrue(mock_upload_s3.called)
 
+    @patch("controller.prediction.model")
+    @patch("controller.prediction.query_save_prediction_session")
+    @patch("controller.prediction.query_save_detection_object")
+    @patch("controller.prediction.upload_image_to_s3")
+    def test_predict_s3_fallback_on_predicted_image_upload_failure(
+        self, mock_upload_s3, mock_save_detection, mock_save_session, mock_model
+    ):
+        """Test /predict falls back to local storage when predicted image S3 upload fails"""
+        # Create a real test image
+        test_image = Image.new("RGB", (100, 100), color="white")
+        image_bytes = io.BytesIO()
+        test_image.save(image_bytes, format="JPEG")
+        image_bytes.seek(0)
+        
+        # Mock YOLO model
+        fake_result = MagicMock()
+        fake_result.boxes = []
+        fake_result.plot.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_model.return_value = [fake_result]
+        mock_model.names = {}
+        
+        # Mock database saves
+        mock_save_session.return_value = MagicMock()
+        mock_save_detection.return_value = MagicMock()
+        
+        # Mock S3 upload to succeed first time (original image), then fail second time (predicted image)
+        mock_upload_s3.side_effect = [
+            "https://bucket.s3.region.amazonaws.com/original/fake.jpg",  # First call succeeds
+            Exception("Predicted image upload failed")  # Second call fails
+        ]
+
+        response = self.client.post(
+            "/predict",
+            files={"file": ("test.jpg", image_bytes, "image/jpeg")}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("prediction_uid", data)
+        
+        # Verify S3 was attempted twice (original and predicted)
+        self.assertEqual(mock_upload_s3.call_count, 2)
+
     def test_predict_without_file_or_img_parameter(self):
         """Test /predict fails when neither file nor img parameter provided"""
         response = self.client.post("/predict")
