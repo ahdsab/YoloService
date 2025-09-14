@@ -32,24 +32,50 @@ router = APIRouter()
 
 @router.post("/predict")
 def predict(
-    file: UploadFile = File(...),
+    file: UploadFile = File(None),
     db: Session = Depends(get_db),
-    user_id: int = Depends(resolve_user_id)):
+    user_id: int = Depends(resolve_user_id),
+    img: str = None,
+    ):
     """
     Predict objects in an image
     """
-
+    print(img)
     start_time = time.time()
-    ext = os.path.splitext(file.filename)[1]
+
+    # Determine source of image bytes and extension
+    file_content = None
+    if img and not file:
+        # Try to locate the image on disk using common locations
+        candidate_paths = [
+            img,
+            os.path.join(os.getcwd(), img),
+            os.path.join(UPLOAD_DIR, img),
+        ]
+        image_path = next((p for p in candidate_paths if os.path.isfile(p)), None)
+        if not image_path:
+            raise HTTPException(status_code=400, detail=f"Image '{img}' not found on server")
+        ext = os.path.splitext(image_path)[1]
+        with open(image_path, "rb") as f:
+            file_content = f.read()
+    elif file:
+        ext = os.path.splitext(file.filename)[1]
+        # Read uploaded file content
+        file_content = file.file.read()
+    else:
+        raise HTTPException(status_code=400, detail="Provide either a file upload or 'img' query parameter")
     uid = str(uuid.uuid4())
     original_filename = f"{uid}{ext}"
     predicted_filename = f"{uid}{ext}"
 
-    # Read uploaded file content
-    file_content = file.file.read()
-    
-    # Upload original image to S3
-    original_s3_url = upload_image_to_s3(file_content, "original", original_filename)
+    # Try to upload to S3, fallback to local storage if no credentials
+    try:
+        original_s3_url = upload_image_to_s3(file_content, "original", original_filename)
+        use_s3 = True
+    except Exception as e:
+        print(f"S3 upload failed, using local storage: {e}")
+        original_s3_url = f"/uploads/original/{original_filename}"
+        use_s3 = False
     
     # Create temporary file for YOLO processing
     temp_original_path = os.path.join(UPLOAD_DIR, original_filename)
@@ -67,10 +93,17 @@ def predict(
     annotated_image = Image.fromarray(annotated_frame)
     annotated_image.save(temp_predicted_path)
     
-    # Read predicted image and upload to S3
-    with open(temp_predicted_path, "rb") as f:
-        predicted_content = f.read()
-    predicted_s3_url = upload_image_to_s3(predicted_content, "predicted", predicted_filename)
+    # Try to upload predicted image to S3, fallback to local storage
+    try:
+        if use_s3:
+            with open(temp_predicted_path, "rb") as f:
+                predicted_content = f.read()
+            predicted_s3_url = upload_image_to_s3(predicted_content, "predicted", predicted_filename)
+        else:
+            predicted_s3_url = f"/uploads/predicted/{predicted_filename}"
+    except Exception as e:
+        print(f"S3 upload failed for predicted image, using local storage: {e}")
+        predicted_s3_url = f"/uploads/predicted/{predicted_filename}"
 
     # Save to database with S3 URLs
     new_session = query_save_prediction_session(db, uid, original_s3_url, predicted_s3_url, user_id)
@@ -84,12 +117,13 @@ def predict(
         new_detection = query_save_detection_object(db, uid, label, score, bbox)
         detected_labels.append(label)
 
-    # Clean up temporary files
-    try:
-        os.remove(temp_original_path)
-        os.remove(temp_predicted_path)
-    except OSError:
-        pass  # Files might not exist
+    # Clean up temporary files only if using S3
+    if use_s3:
+        try:
+            os.remove(temp_original_path)
+            os.remove(temp_predicted_path)
+        except OSError:
+            pass  # Files might not exist
 
     processing_time = round(time.time() - start_time, 2)
 

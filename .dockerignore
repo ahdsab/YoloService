@@ -6,3 +6,20 @@
 uploads/
 
 .env
+
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.env*
+.venv/
+venv/
+dist/
+build/
+htmlcov/
+.coverage
+.allure*/
+allure-results/
+uploads/
+tests/
